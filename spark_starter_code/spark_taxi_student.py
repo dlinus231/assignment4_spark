@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType, LongType
 
-from pyspark.sql.functions import col, unix_timestamp, round
+from pyspark.sql.functions import col, unix_timestamp, round, rank
 # TODO: Import any other pyspark.sql.functions you might need (e.g., count, desc, window)
 from pyspark.sql.window import Window
 import os
@@ -56,29 +56,65 @@ def clean_taxi_data(df):
     """
     Part 1: Clean the raw trip data.
     """
-    # TODO: Implement cleaning logic
+    df = df.filter(
+        (df.passenger_count.isNotNull()) & (df.passenger_count != 0) &
+        (df.trip_distance > 0) & 
+        (df.fare_amount > 0)
+    )
+    df = df.withColumn("trip_duration_minutes", 
+        ((unix_timestamp(df.tpep_dropoff_datetime) - unix_timestamp(df.tpep_pickup_datetime)) / 60)
+        .cast('long')
+    )
+    df = df.filter(
+        (df.trip_duration_minutes >= 1) & (df.trip_duration_minutes <= 120)
+    )
     return df
 
 def join_zone_lookups(trip_df, zone_df):
     """
     Part 2.1: Join trip data with zone lookups.
     """
-    # TODO: Implement join logic
-    return trip_df
+    # Exluding zone_df.service_zone column from final result
+    zone_df = zone_df.select(zone_df.LocationID, zone_df.Borough)
+
+    # PULocation join
+    joined_df = trip_df.join(
+        zone_df.withColumnRenamed("Borough", "PU_Borough"),
+        trip_df.PULocationID == zone_df.LocationID, 
+        "left"
+    ).drop("LocationID")
+
+    # DOLocation join
+    joined_df = joined_df.join(
+        zone_df.withColumnRenamed("Borough", "DO_Borough"), 
+        trip_df.DOLocationID == zone_df.LocationID, 
+        "left"
+    ).drop("LocationID")
+
+    return joined_df
 
 def calculate_busiest_boroughs(joined_df):
     """
     Part 2.2: Calculate total trips per pickup borough.
     """
-    # TODO: Implement aggregation logic
+    joined_df = joined_df.groupBy(col("PU_Borough")).count() \
+        .orderBy(col("count").desc())
     return joined_df
 
 def calculate_top_dropoff_zones_by_pickup(joined_df):
     """
     Part 3: Advanced Analytics using Window Functions.
     """
-    # TODO: Implement windowing and ranking logic
-    return joined_df
+    # Manhattan, Manhattan, 123 --> rank 1
+    # Manhattan, Brooklyn, 54 --> rank 2
+    # Manhattan, NJ, 27 --> rank 3
+
+    count_by_boroughs = joined_df.groupBy(col("PU_Borough"), col("DO_Borough")).count()
+    window = Window.partitionBy("PU_Borough").orderBy(col("count").desc())
+    ranked_counts = count_by_boroughs.withColumn("rank", rank().over(window))
+    top_3_counts = ranked_counts.filter(col("rank") <= 3).orderBy("PU_Borough", "rank")
+
+    return top_3_counts
 
 def write_to_snowflake(df, table_name):
     """
@@ -140,10 +176,17 @@ def main():
     ])
     try:
         raw_trips = spark.createDataFrame([], schema=schema)
+
         for filePath in os.listdir("data"):
+            if ".csv" in filePath:
+                continue
             trip_path = os.path.join("data", filePath)
             print("reading", trip_path)
-            df_raw = spark.read.schema(schema).parquet(trip_path)
+            df_raw = spark.read.parquet(trip_path)
+            df_raw = df_raw.withColumn(
+                "passenger_count", 
+                col("passenger_count").cast("long")
+            )
             raw_trips = raw_trips.unionByName(df_raw, allowMissingColumns=True)
         
         zones = spark.read.option("header", "true").option("inferSchema", "true").csv(zone_path)
@@ -152,17 +195,19 @@ def main():
         spark.stop()
         exit(1)
 
-    print("Showing raw_trips data")
+    # print("Showing raw_trips data")
     raw_trips.show(10)
+    raw_trips.printSchema()
 
-    print("Showing zones data")
-    zones.show(10)
+    # print("Showing zones data")
+    # zones.show(10)
 
     print("Cleaning data...")
     cleaned_trips = clean_taxi_data(raw_trips)
 
     print("Joining zone lookups...")
     joined_data = join_zone_lookups(cleaned_trips, zones)
+    joined_data.show(10)
 
     print("Caching joined data in memory...")
     joined_data.cache()
@@ -182,7 +227,7 @@ def main():
     # write_to_snowflake(busiest_boroughs, "TAXI_BUSIEST_BOROUGHS")
 
     # Run extra credit
-    extra_credit(joined_data)
+    # extra_credit(joined_data)
 
     spark.stop()
 
