@@ -112,7 +112,7 @@ def calculate_top_dropoff_zones_by_pickup(joined_df):
     count_by_boroughs = joined_df.groupBy(col("PU_Borough"), col("DO_Borough")).count()
     window = Window.partitionBy("PU_Borough").orderBy(col("count").desc())
     ranked_counts = count_by_boroughs.withColumn("rank", rank().over(window))
-    top_3_counts = ranked_counts.filter(col("rank") <= 3).orderBy("PU_Borough", "rank")
+    top_3_counts = ranked_counts.filter(col("rank") <= 3).orderBy("PU_Borough", "rank").drop("rank")
 
     return top_3_counts
 
@@ -121,19 +121,23 @@ def write_to_snowflake(df, table_name):
     Part 5: Data Warehousing with Snowflake using Key Pair Auth.
     """
     # TODO: Load your private key into a variable using the helper function
-    # pkb_string = get_private_key_string("/path/to/rsa_key.p8")
+    pkb_string = get_private_key_string("/home/linus-dannull/Documents/WashUCoding/Data Engineering/assignment4_spark/spark_starter_code/rsa_key.p8")
 
     sfOptions = {
       "sfURL": "sfedu02-unb02139.snowflakecomputing.com",
-      "sfUser": "YOUR_USERNAME",
-      "sfDatabase": "YOUR_DATABASE",
+      "sfUser": "FERRET",
+      "sfDatabase": "FERRET_DB",
       "sfSchema": "PUBLIC",
-      "sfWarehouse": "YOUR_WAREHOUSE",
-      "pem_private_key": "YOUR_PRIVATE_KEY_STRING_HERE"
+      "sfWarehouse": "FERRET_WH",
+      "pem_private_key": pkb_string
     }
 
-    # TODO: Use df.write.format("net.snowflake.spark.snowflake") to write the data
-    pass
+    df.write \
+        .format("net.snowflake.spark.snowflake") \
+        .options(**sfOptions) \
+        .option("dbtable", table_name) \
+        .mode("overwrite") \
+        .save()
 
 def extra_credit(joined_df):
     """
@@ -207,7 +211,7 @@ def main():
 
     print("Joining zone lookups...")
     joined_data = join_zone_lookups(cleaned_trips, zones)
-    joined_data.show(10)
+    # joined_data.show(10)
 
     print("Caching joined data in memory...")
     joined_data.cache()
@@ -223,8 +227,12 @@ def main():
     top_dropoffs = calculate_top_dropoff_zones_by_pickup(joined_data)
     top_dropoffs.show(15, truncate=False)
 
+    busiest_boroughs.printSchema()
+
     # Part 5: Write to Snowflake
-    # write_to_snowflake(busiest_boroughs, "TAXI_BUSIEST_BOROUGHS")
+    dst_table_name = "TAXI_BUSIEST_BOROUGHS"
+    print("Writing data to", dst_table_name)
+    write_to_snowflake(busiest_boroughs, dst_table_name)
 
     # Run extra credit
     # extra_credit(joined_data)
