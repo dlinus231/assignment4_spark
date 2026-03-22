@@ -1,4 +1,6 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType, LongType
+
 from pyspark.sql.functions import col, unix_timestamp, round
 # TODO: Import any other pyspark.sql.functions you might need (e.g., count, desc, window)
 from pyspark.sql.window import Window
@@ -105,7 +107,7 @@ def extra_credit(joined_df):
     # TODO: (Optional) Your awesome code here
     pass
 
-if __name__ == "__main__":
+def main():
     spark = create_spark_session()
 
     # Load Data
@@ -115,13 +117,46 @@ if __name__ == "__main__":
 
     print("Loading data into DataFrames...")
     # TODO: fix this code to handle schema drift and potential loading issues gracefully
+    schema = StructType([
+        StructField("VendorID", DoubleType(), True),  # Cast to DOUBLE
+        StructField("tpep_pickup_datetime", TimestampType(), True),
+        StructField("tpep_dropoff_datetime", TimestampType(), True),
+        StructField("passenger_count", LongType(), True),  # Cast to DOUBLE
+        StructField("trip_distance", DoubleType(), True),
+        StructField("RatecodeID", LongType(), True),  # Cast to DOUBLE
+        StructField("store_and_fwd_flag", StringType(), True),
+        StructField("PULocationID", DoubleType(), True),  # Cast to DOUBLE
+        StructField("DOLocationID", DoubleType(), True),  # Cast to DOUBLE
+        StructField("payment_type", LongType(), True),
+        StructField("fare_amount", DoubleType(), True),
+        StructField("extra", DoubleType(), True),
+        StructField("mta_tax", DoubleType(), True),
+        StructField("tip_amount", DoubleType(), True),
+        StructField("tolls_amount", DoubleType(), True),
+        StructField("improvement_surcharge", DoubleType(), True),
+        StructField("total_amount", DoubleType(), True),
+        StructField("congestion_surcharge", DoubleType(), True),
+        StructField("airport_fee", DoubleType(), True)  # Cast to DOUBLE
+    ])
     try:
-        raw_trips = spark.read.option("mergeSchema", "true").parquet(trip_path)
+        raw_trips = spark.createDataFrame([], schema=schema)
+        for filePath in os.listdir("data"):
+            trip_path = os.path.join("data", filePath)
+            print("reading", trip_path)
+            df_raw = spark.read.schema(schema).parquet(trip_path)
+            raw_trips = raw_trips.unionByName(df_raw, allowMissingColumns=True)
+        
         zones = spark.read.option("header", "true").option("inferSchema", "true").csv(zone_path)
     except Exception as e:
         print(f"Error loading data. Did you run download_data.py? Error: {e}")
         spark.stop()
         exit(1)
+
+    print("Showing raw_trips data")
+    raw_trips.show(10)
+
+    print("Showing zones data")
+    zones.show(10)
 
     print("Cleaning data...")
     cleaned_trips = clean_taxi_data(raw_trips)
@@ -150,3 +185,6 @@ if __name__ == "__main__":
     extra_credit(joined_data)
 
     spark.stop()
+
+if __name__ == "__main__":
+    main()
